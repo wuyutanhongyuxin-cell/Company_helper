@@ -1,0 +1,29 @@
+# Payroll Management System Dependencies
+# 薪酬管理系统依赖
+
+# Web Framework
+streamlit>=1.28.0
+
+# Database
+SQLAlchemy>=2.0.0
+
+# Security
+cryptography>=41.0.0
+argon2-cffi>=23.1.0
+
+# Data Processing
+pandas>=2.0.0
+openpyxl>=3.1.0
+xlrd>=2.0.0
+
+# Excel Export with Encryption
+msoffcrypto-tool>=5.0.0
+
+# Utilities
+python-dateutil>=2.8.0
+
+# Testing (dev)
+pytest>=7.4.0
+
+# Optional: SQLCipher support (may require manual installation)
+# sqlcipher3-binary>=0.5.0
