@@ -225,146 +225,177 @@ def render_import_page():
         render_import_adjustments(user)
 
 
-def render_import_employees(user: Dict[str, Any]):
-    """Render employee import section."""
-    st.subheader("导入员工信息")
+def _get_template_data(template_name: str) -> bytes:
+    """Read template file data."""
+    import os
+    template_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), template_name)
+    if os.path.exists(template_path):
+        with open(template_path, "rb") as f:
+            return f.read()
+    # Fallback to current directory
+    if os.path.exists(template_name):
+        with open(template_name, "rb") as f:
+            return f.read()
+    return b""
+
+
+def _process_uploaded_files(uploaded_files, import_func, user: Dict[str, Any], data_type: str):
+    """Process multiple uploaded files."""
+    if not uploaded_files:
+        return
     
-    # Download template
-    with open("employees_template.xlsx", "rb") as f:
-        st.download_button(
-            "📥 下载模板",
-            f,
-            file_name="employees_template.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    # Handle single file or list of files
+    if not isinstance(uploaded_files, list):
+        uploaded_files = [uploaded_files]
     
-    # Upload file
-    uploaded_file = st.file_uploader("选择 Excel 文件", type=["xlsx", "xls", "csv"], key="emp_upload")
+    total_success = 0
+    total_errors = []
     
-    if uploaded_file:
+    for uploaded_file in uploaded_files:
         try:
             if uploaded_file.name.endswith(".csv"):
                 df = pd.read_csv(uploaded_file)
             else:
                 df = pd.read_excel(uploaded_file)
             
-            st.write("预览数据：")
-            st.dataframe(df.head(10), use_container_width=True)
+            st.write(f"**{uploaded_file.name}** 预览数据：")
+            st.dataframe(df.head(5), use_container_width=True)
             
-            if st.button("确认导入", key="emp_import"):
-                with st.spinner("正在导入..."):
-                    success, message, count = ImportService.import_employees(df, user["username"])
-                    if success:
-                        st.success(message)
-                    else:
-                        st.error(message)
         except Exception as e:
-            st.error(f"文件读取失败: {str(e)}")
+            st.error(f"文件 {uploaded_file.name} 读取失败: {str(e)}")
+    
+    if st.button(f"确认导入所有{data_type}", key=f"import_{data_type}_btn"):
+        with st.spinner("正在导入..."):
+            for uploaded_file in uploaded_files:
+                try:
+                    uploaded_file.seek(0)  # Reset file pointer
+                    if uploaded_file.name.endswith(".csv"):
+                        df = pd.read_csv(uploaded_file)
+                    else:
+                        df = pd.read_excel(uploaded_file)
+                    
+                    success, message, count = import_func(df, user["username"])
+                    if success:
+                        total_success += count
+                        st.success(f"{uploaded_file.name}: {message}")
+                    else:
+                        total_errors.append(f"{uploaded_file.name}: {message}")
+                except Exception as e:
+                    total_errors.append(f"{uploaded_file.name}: {str(e)}")
+            
+            if total_success > 0:
+                st.success(f"✅ 总共成功导入 {total_success} 条记录")
+            if total_errors:
+                for err in total_errors:
+                    st.error(err)
+
+
+def render_import_employees(user: Dict[str, Any]):
+    """Render employee import section."""
+    st.subheader("导入员工信息")
+    
+    # Download template - read data first
+    template_data = _get_template_data("employees_template.xlsx")
+    if template_data:
+        st.download_button(
+            label="📥 下载模板",
+            data=template_data,
+            file_name="员工信息模板.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="emp_template_download"
+        )
+    
+    st.write("**支持的列名**: 工号/员工编号, 姓名, 部门, 岗位, 入职日期, 银行卡号, 身份证号")
+    
+    # Multi-file upload
+    uploaded_files = st.file_uploader(
+        "选择 Excel 文件（支持多选）", 
+        type=["xlsx", "xls", "csv"], 
+        key="emp_upload",
+        accept_multiple_files=True
+    )
+    
+    _process_uploaded_files(uploaded_files, ImportService.import_employees, user, "员工信息")
 
 
 def render_import_salary_structures(user: Dict[str, Any]):
     """Render salary structure import section."""
     st.subheader("导入薪资结构")
     
-    with open("salary_structures_template.xlsx", "rb") as f:
+    template_data = _get_template_data("salary_structures_template.xlsx")
+    if template_data:
         st.download_button(
-            "📥 下载模板",
-            f,
-            file_name="salary_structures_template.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            label="📥 下载模板",
+            data=template_data,
+            file_name="薪资结构模板.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="sal_template_download"
         )
     
-    uploaded_file = st.file_uploader("选择 Excel 文件", type=["xlsx", "xls", "csv"], key="sal_upload")
+    st.write("**支持的列名**: 工号/员工编号, 基本工资, 时薪, 加班倍率, 日扣款标准")
     
-    if uploaded_file:
-        try:
-            if uploaded_file.name.endswith(".csv"):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
-            
-            st.write("预览数据：")
-            st.dataframe(df.head(10), use_container_width=True)
-            
-            if st.button("确认导入", key="sal_import"):
-                with st.spinner("正在导入..."):
-                    success, message, count = ImportService.import_salary_structures(df, user["username"])
-                    if success:
-                        st.success(message)
-                    else:
-                        st.error(message)
-        except Exception as e:
-            st.error(f"文件读取失败: {str(e)}")
+    uploaded_files = st.file_uploader(
+        "选择 Excel 文件（支持多选）", 
+        type=["xlsx", "xls", "csv"], 
+        key="sal_upload",
+        accept_multiple_files=True
+    )
+    
+    _process_uploaded_files(uploaded_files, ImportService.import_salary_structures, user, "薪资结构")
 
 
 def render_import_attendance(user: Dict[str, Any]):
     """Render attendance import section."""
     st.subheader("导入考勤数据")
     
-    with open("attendance_template.xlsx", "rb") as f:
+    template_data = _get_template_data("attendance_template.xlsx")
+    if template_data:
         st.download_button(
-            "📥 下载模板",
-            f,
-            file_name="attendance_template.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            label="📥 下载模板",
+            data=template_data,
+            file_name="考勤数据模板.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="att_template_download"
         )
     
-    uploaded_file = st.file_uploader("选择 Excel 文件", type=["xlsx", "xls", "csv"], key="att_upload")
+    st.write("**支持的列名**: 工号/员工编号, 期间/月份, 工作天数/出勤天数, 加班小时, 缺勤天数")
     
-    if uploaded_file:
-        try:
-            if uploaded_file.name.endswith(".csv"):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
-            
-            st.write("预览数据：")
-            st.dataframe(df.head(10), use_container_width=True)
-            
-            if st.button("确认导入", key="att_import"):
-                with st.spinner("正在导入..."):
-                    success, message, count = ImportService.import_attendance(df, user["username"])
-                    if success:
-                        st.success(message)
-                    else:
-                        st.error(message)
-        except Exception as e:
-            st.error(f"文件读取失败: {str(e)}")
+    uploaded_files = st.file_uploader(
+        "选择 Excel 文件（支持多选）", 
+        type=["xlsx", "xls", "csv"], 
+        key="att_upload",
+        accept_multiple_files=True
+    )
+    
+    _process_uploaded_files(uploaded_files, ImportService.import_attendance, user, "考勤数据")
 
 
 def render_import_adjustments(user: Dict[str, Any]):
     """Render adjustments import section."""
     st.subheader("导入调整项")
     
-    with open("adjustments_template.xlsx", "rb") as f:
+    template_data = _get_template_data("adjustments_template.xlsx")
+    if template_data:
         st.download_button(
-            "📥 下载模板",
-            f,
-            file_name="adjustments_template.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            label="📥 下载模板",
+            data=template_data,
+            file_name="调整项模板.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="adj_template_download"
         )
     
-    uploaded_file = st.file_uploader("选择 Excel 文件", type=["xlsx", "xls", "csv"], key="adj_upload")
+    st.write("**支持的列名**: 工号/员工编号, 期间/月份, 类型(add/deduct), 金额, 原因/备注")
     
-    if uploaded_file:
-        try:
-            if uploaded_file.name.endswith(".csv"):
-                df = pd.read_csv(uploaded_file)
-            else:
-                df = pd.read_excel(uploaded_file)
-            
-            st.write("预览数据：")
-            st.dataframe(df.head(10), use_container_width=True)
-            
-            if st.button("确认导入", key="adj_import"):
-                with st.spinner("正在导入..."):
-                    success, message, count = ImportService.import_adjustments(df, user["username"])
-                    if success:
-                        st.success(message)
-                    else:
-                        st.error(message)
-        except Exception as e:
-            st.error(f"文件读取失败: {str(e)}")
+    uploaded_files = st.file_uploader(
+        "选择 Excel 文件（支持多选）", 
+        type=["xlsx", "xls", "csv"], 
+        key="adj_upload",
+        accept_multiple_files=True
+    )
+    
+    _process_uploaded_files(uploaded_files, ImportService.import_adjustments, user, "调整项")
+
+
 
 
 # =============================================================================
