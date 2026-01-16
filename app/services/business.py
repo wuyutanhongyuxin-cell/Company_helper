@@ -763,18 +763,30 @@ class ImportService:
     数据导入服务
     """
     
-    # Column mapping for Chinese headers
+    # Column mapping for Chinese headers (支持多种列名变体)
     EMPLOYEE_COLUMNS = {
         "员工编号": "employee_no",
+        "工号": "employee_no",
+        "编号": "employee_no",
         "姓名": "name",
+        "名字": "name",
         "部门": "department",
+        "岗位": "position",  # 存到 department 如果没有部门列
         "入职日期": "hire_date",
+        "入职时间": "hire_date",
         "银行卡号": "bank_card",
+        "银行卡": "bank_card",
         "身份证号": "id_number",
+        "身份证": "id_number",
+        "联系电话": "phone",
+        "电话": "phone",
+        "开户行": "bank_name",
+        "状态": "status",
     }
     
     SALARY_COLUMNS = {
         "员工编号": "employee_no",
+        "工号": "employee_no",
         "基本工资": "base_salary",
         "时薪": "hourly_rate",
         "加班倍率": "overtime_multiplier",
@@ -785,18 +797,25 @@ class ImportService:
     
     ATTENDANCE_COLUMNS = {
         "员工编号": "employee_no",
+        "工号": "employee_no",
         "期间": "period",
+        "月份": "period",
         "工作天数": "work_days",
+        "出勤天数": "work_days",
         "加班小时": "overtime_hours",
+        "加班时长": "overtime_hours",
         "缺勤天数": "absence_days",
     }
     
     ADJUSTMENT_COLUMNS = {
         "员工编号": "employee_no",
+        "工号": "employee_no",
         "期间": "period",
+        "月份": "period",
         "类型": "type",
         "金额": "amount",
         "原因": "reason",
+        "备注": "reason",
     }
     
     @staticmethod
