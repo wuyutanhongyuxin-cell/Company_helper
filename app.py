@@ -80,20 +80,41 @@ def main():
         
         st.divider()
         
+        # Page mapping for quick action buttons
+        page_mapping = {
+            "import": "📥 数据导入",
+            "payroll": "💰 工资计算",
+            "export": "📤 报表导出",
+            "audit": "📋 审计日志",
+        }
+        
+        # Get current page from session state (set by quick action buttons)
+        page_options = [
+            "📊 控制面板",
+            "📥 数据导入",
+            "💰 工资计算",
+            "📤 报表导出",
+            "📈 报表中心",
+            "👥 用户管理",
+            "📋 审计日志",
+            "⚙️ 系统设置",
+        ]
+        
+        # Check if quick action button set a page
+        quick_page = st.session_state.get("page")
+        default_index = 0
+        if quick_page and quick_page in page_mapping:
+            target_page = page_mapping[quick_page]
+            if target_page in page_options:
+                default_index = page_options.index(target_page)
+            # Clear the quick action page after using it
+            del st.session_state["page"]
+        
         # Navigation menu
         page = st.radio(
             "导航",
-            options=[
-                "📊 控制面板",
-                "📥 数据导入",
-                "💰 工资计算",
-                "📤 报表导出",
-                "📈 报表中心",
-                "👥 用户管理",
-                "📋 审计日志",
-                "⚙️ 系统设置",
-            ],
-            index=0,
+            options=page_options,
+            index=default_index,
             label_visibility="collapsed",
         )
         
