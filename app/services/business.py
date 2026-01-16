@@ -82,7 +82,7 @@ class AuthService:
     """
     
     @staticmethod
-    def login(username: str, password: str) -> Tuple[bool, Optional[User], str]:
+    def login(username: str, password: str) -> Tuple[bool, Optional[Dict[str, Any]], str]:
         """
         Authenticate a user.
         
@@ -91,7 +91,7 @@ class AuthService:
             password: The password to verify
             
         Returns:
-            Tuple of (success, user, message)
+            Tuple of (success, user_data_dict, message)
         """
         rate_limiter = get_rate_limiter()
         
@@ -117,7 +117,14 @@ class AuthService:
                 remaining_attempts = rate_limiter.get_remaining_attempts(username)
                 return False, None, f"用户名或密码错误（剩余 {remaining_attempts} 次尝试）"
             
-            # Success
+            # Success - extract user data while still in session
+            user_data = {
+                "id": user.id,
+                "username": user.username,
+                "role": user.role.value,
+                "is_active": user.is_active,
+            }
+            
             rate_limiter.record_attempt(username, success=True)
             UserRepository.update_last_login(session, user.id)
             
@@ -129,7 +136,7 @@ class AuthService:
                 result="success",
             )
             
-            return True, user, "登录成功"
+            return True, user_data, "登录成功"
     
     @staticmethod
     def create_user(

@@ -76,13 +76,10 @@ def render_login_page():
             if not username or not password:
                 st.error("请输入用户名和密码")
             else:
-                success, user, message = AuthService.login(username, password)
-                if success and user:
-                    st.session_state["user"] = {
-                        "id": user.id,
-                        "username": user.username,
-                        "role": user.role.value,
-                    }
+                success, user_data, message = AuthService.login(username, password)
+                if success and user_data:
+                    # user_data is already a dictionary
+                    st.session_state["user"] = user_data
                     st.success(message)
                     st.rerun()
                 else:
