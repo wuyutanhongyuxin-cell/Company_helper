@@ -1,8 +1,30 @@
 # 薪酬管理系统 (Payroll Management System)
 
+[![CI](https://github.com/wuyutanhongyuxin-cell/Company_helper/actions/workflows/ci.yml/badge.svg)](https://github.com/wuyutanhongyuxin-cell/Company_helper/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows-lightgrey.svg)](https://www.microsoft.com/windows)
+
 一款专为中小企业设计的**离线安全薪酬管理工具**，基于 Windows 平台运行，具备企业级数据加密和完整的审计追踪功能。
 
+## 🚀 快速开始
+
+```bash
+# 克隆仓库
+git clone https://github.com/wuyutanhongyuxin-cell/Company_helper.git
+cd Company_helper
+
+# 安装依赖
+setup.bat
+
+# 启动系统
+run.bat
+```
+
+浏览器访问 http://localhost:8501 即可使用。
+
 ---
+
 
 ## 目录
 
