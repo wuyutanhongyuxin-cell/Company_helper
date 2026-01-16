@@ -313,6 +313,15 @@ def get_encryption_manager(master_key: Optional[str] = None) -> EncryptionManage
         if master_key is None:
             # Try to get from environment for testing
             master_key = os.environ.get("TEST_MASTER_KEY")
+            
+            # Try to get from Streamlit session state
+            if master_key is None:
+                try:
+                    import streamlit as st
+                    master_key = st.session_state.get("master_key")
+                except:
+                    pass
+            
             if master_key is None:
                 raise ValueError("Master key is required to initialize EncryptionManager")
         
