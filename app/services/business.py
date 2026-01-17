@@ -43,6 +43,14 @@ from app.db import (
 def get_encryption_manager():
     """Get encryption manager (lazy import)."""
     from app.security import get_encryption_manager as _get_em
+    # Try to get master_key from Streamlit session_state
+    try:
+        import streamlit as st
+        master_key = st.session_state.get("master_key")
+        if master_key:
+            return _get_em(master_key)
+    except:
+        pass
     return _get_em()
 
 
@@ -253,8 +261,9 @@ class EmployeeService:
             return False, "员工编号无效", None
         if not name:
             return False, "员工姓名无效", None
+        # 部门是可选的，默认为"未分配"
         if not department:
-            return False, "部门无效", None
+            department = "未分配"
         if not hire_date:
             return False, "入职日期无效", None
         
@@ -771,7 +780,7 @@ class ImportService:
         "姓名": "name",
         "名字": "name",
         "部门": "department",
-        "岗位": "position",  # 存到 department 如果没有部门列
+        "岗位": "department",  # 岗位也作为部门处理
         "入职日期": "hire_date",
         "入职时间": "hire_date",
         "银行卡号": "bank_card",
