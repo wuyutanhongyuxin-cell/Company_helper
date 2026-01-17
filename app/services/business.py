@@ -851,6 +851,14 @@ class ImportService:
         Returns:
             Tuple of (success, message, count)
         """
+        # 预先检查加密管理器是否可用
+        try:
+            get_encryption_manager()
+        except ValueError as e:
+            return False, f"导入失败: 加密服务未初始化，请确保您已登录并输入了正确的主密钥", 0
+        except Exception as e:
+            return False, f"导入失败: 加密服务错误 - {str(e)}", 0
+        
         df = ImportService._rename_columns(df, ImportService.EMPLOYEE_COLUMNS)
         
         imported_count = 0

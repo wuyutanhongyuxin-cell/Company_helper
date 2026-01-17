@@ -323,7 +323,7 @@ def get_encryption_manager(master_key: Optional[str] = None) -> EncryptionManage
                     pass
             
             if master_key is None:
-                raise ValueError("Master key is required to initialize EncryptionManager")
+                raise ValueError("需要主密钥才能初始化加密服务。请确保您已登录并正确输入主密钥。")
         
         keys_dir = os.environ.get("KEYS_DIR", ".")
         _encryption_manager = EncryptionManager(master_key, keys_dir)

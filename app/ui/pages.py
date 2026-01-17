@@ -70,18 +70,33 @@ def render_login_page():
     with st.form("login_form"):
         username = st.text_input("用户名")
         password = st.text_input("密码", type="password")
+        master_key = st.text_input("主密钥", type="password", help="用于加密/解密敏感数据的主密钥")
         submitted = st.form_submit_button("登录", use_container_width=True)
         
         if submitted:
             if not username or not password:
                 st.error("请输入用户名和密码")
+            elif not master_key:
+                st.error("请输入主密钥")
             else:
                 success, user_data, message = AuthService.login(username, password)
                 if success and user_data:
-                    # user_data is already a dictionary
-                    st.session_state["user"] = user_data
-                    st.success(message)
-                    st.rerun()
+                    # Verify master key is correct by trying to initialize encryption manager
+                    try:
+                        from app.security.core import EncryptionManager
+                        em = EncryptionManager(master_key)
+                        # If we get here, the master key is correct
+                        st.session_state["master_key"] = master_key
+                        st.session_state["user"] = user_data
+                        # Initialize the encryption manager singleton
+                        from app.security.core import get_encryption_manager
+                        get_encryption_manager(master_key)
+                        st.success(message)
+                        st.rerun()
+                    except ValueError as e:
+                        st.error(f"主密钥验证失败: {str(e)}")
+                    except Exception as e:
+                        st.error(f"加密服务初始化失败: {str(e)}")
                 else:
                     st.error(message)
 
