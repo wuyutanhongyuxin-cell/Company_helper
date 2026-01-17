@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from typing import Optional, List
 from datetime import datetime
+from threading import Lock
 
 from cryptography.fernet import Fernet, MultiFernet, InvalidToken
 from cryptography.hazmat.primitives import hashes
@@ -295,54 +296,63 @@ class PasswordManager:
 # Singleton instances
 _encryption_manager: Optional[EncryptionManager] = None
 _password_manager: Optional[PasswordManager] = None
+_encryption_lock = Lock()  # 线程锁保护加密管理器初始化
+_password_lock = Lock()     # 线程锁保护密码管理器初始化
 
 
 def get_encryption_manager(master_key: Optional[str] = None) -> EncryptionManager:
     """
-    Get or create the singleton EncryptionManager instance.
-    
+    Get or create the singleton EncryptionManager instance (thread-safe).
+
     Args:
         master_key: Master key for encryption (required on first call)
-        
+
     Returns:
         EncryptionManager instance
     """
     global _encryption_manager
-    
+
+    # 双重检查锁定模式（Double-Checked Locking）
     if _encryption_manager is None:
-        if master_key is None:
-            # Try to get from environment for testing
-            master_key = os.environ.get("TEST_MASTER_KEY")
-            
-            # Try to get from Streamlit session state
-            if master_key is None:
-                try:
-                    import streamlit as st
-                    master_key = st.session_state.get("master_key")
-                except:
-                    pass
-            
-            if master_key is None:
-                raise ValueError("需要主密钥才能初始化加密服务。请确保您已登录并正确输入主密钥。")
-        
-        keys_dir = os.environ.get("KEYS_DIR", ".")
-        _encryption_manager = EncryptionManager(master_key, keys_dir)
-    
+        with _encryption_lock:
+            # 再次检查，防止多个线程同时通过第一次检查
+            if _encryption_manager is None:
+                if master_key is None:
+                    # 尝试从 Streamlit session state 获取（优先级最高）
+                    try:
+                        import streamlit as st
+                        master_key = st.session_state.get("master_key")
+                    except:
+                        pass
+
+                    # 仅在测试环境使用环境变量
+                    if master_key is None and os.environ.get("TESTING") == "true":
+                        master_key = os.environ.get("TEST_MASTER_KEY")
+
+                    if master_key is None:
+                        raise ValueError("需要主密钥才能初始化加密服务。请确保您已登录并正确输入主密钥。")
+
+                keys_dir = os.environ.get("KEYS_DIR", ".")
+                _encryption_manager = EncryptionManager(master_key, keys_dir)
+
     return _encryption_manager
 
 
 def get_password_manager() -> PasswordManager:
     """
-    Get or create the singleton PasswordManager instance.
-    
+    Get or create the singleton PasswordManager instance (thread-safe).
+
     Returns:
         PasswordManager instance
     """
     global _password_manager
-    
+
+    # 双重检查锁定模式
     if _password_manager is None:
-        _password_manager = PasswordManager()
-    
+        with _password_lock:
+            if _password_manager is None:
+                _password_manager = PasswordManager()
+
     return _password_manager
 
 

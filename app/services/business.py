@@ -93,38 +93,46 @@ class AuthService:
     def login(username: str, password: str) -> Tuple[bool, Optional[Dict[str, Any]], str]:
         """
         Authenticate a user.
-        
+
         Args:
             username: The username to authenticate
             password: The password to verify
-            
+
         Returns:
             Tuple of (success, user_data_dict, message)
         """
         rate_limiter = get_rate_limiter()
-        
+
         # Check rate limiting
         is_locked, remaining = rate_limiter.is_locked(username)
         if is_locked:
             return False, None, f"账户已锁定，请 {remaining} 秒后重试"
-        
+
         with session_scope() as session:
             user = UserRepository.get_by_username(session, username)
-            
+            pm = get_password_manager()
+
+            # 防止时序攻击：无论用户是否存在都执行密码验证
             if user is None:
+                # 使用假哈希值进行验证，确保执行时间一致
+                dummy_hash = "$argon2id$v=19$m=65536,t=3,p=4$dGVzdHNhbHQxMjM0NTY3OA$qL0jB5Kz9X0mC3nP8rE4wK2vF5tU7yH6sD1aB3cE4fG"
+                pm.verify_password(password, dummy_hash)
                 rate_limiter.record_attempt(username, success=False)
                 return False, None, "用户名或密码错误"
-            
+
+            # Verify password (真实验证)
+            password_valid = pm.verify_password(password, user.password_hash)
+
+            # 检查账户状态
             if not user.is_active:
-                return False, None, "账户已禁用"
-            
-            # Verify password
-            pm = get_password_manager()
-            if not pm.verify_password(password, user.password_hash):
+                rate_limiter.record_attempt(username, success=False)
+                return False, None, "用户名或密码错误"  # 统一错误消息，不泄露账户状态
+
+            if not password_valid:
                 rate_limiter.record_attempt(username, success=False)
                 remaining_attempts = rate_limiter.get_remaining_attempts(username)
                 return False, None, f"用户名或密码错误（剩余 {remaining_attempts} 次尝试）"
-            
+
             # Success - extract user data while still in session
             user_data = {
                 "id": user.id,
@@ -132,10 +140,10 @@ class AuthService:
                 "role": user.role.value,
                 "is_active": user.is_active,
             }
-            
+
             rate_limiter.record_attempt(username, success=True)
             UserRepository.update_last_login(session, user.id)
-            
+
             # Log the login
             AuditLogRepository.create(
                 session,
@@ -143,7 +151,7 @@ class AuthService:
                 action="login",
                 result="success",
             )
-            
+
             return True, user_data, "登录成功"
     
     @staticmethod
@@ -544,21 +552,26 @@ class PayrollService:
             total_net = Decimal("0")
             processed_count = 0
             
+            employees_without_attendance = []
+
             for employee in employees:
                 # Get salary structure
                 structure = SalaryStructureRepository.get_by_employee(session, employee.id)
                 if not structure:
                     continue
-                
-                # Get attendance
+
+                # Get attendance - 必须存在考勤记录
                 attendance = AttendanceRepository.get_by_employee_period(session, employee.id, period)
-                
+                if not attendance:
+                    employees_without_attendance.append(f"{employee.name}({employee.employee_no})")
+                    continue  # 跳过没有考勤记录的员工
+
                 # Get adjustments
                 adj_add, adj_deduct = AdjustmentRepository.sum_by_employee_period(session, employee.id, period)
-                
+
                 # Calculate payroll
                 slip_data = PayrollService._calculate_slip(structure, attendance, adj_add, adj_deduct)
-                
+
                 # Create slip
                 PayrollSlipRepository.create(
                     session,
@@ -566,11 +579,26 @@ class PayrollService:
                     employee_id=employee.id,
                     **slip_data
                 )
-                
+
                 total_gross += slip_data["gross_salary"]
                 total_deductions += slip_data["total_deductions"]
                 total_net += slip_data["net_salary"]
                 processed_count += 1
+
+            # 如果有员工缺少考勤记录，添加到审计日志
+            if employees_without_attendance:
+                warning_msg = f"以下员工没有考勤记录，已跳过: {', '.join(employees_without_attendance[:10])}"
+                if len(employees_without_attendance) > 10:
+                    warning_msg += f" 等共 {len(employees_without_attendance)} 人"
+                AuditLogRepository.create(
+                    session,
+                    actor=actor,
+                    action="generate_payroll_warning",
+                    result="success",
+                    resource_type="payroll_run",
+                    resource_id=run.id,
+                    metadata={"warning": warning_msg, "skipped_employees": len(employees_without_attendance)},
+                )
             
             # Update run totals
             PayrollRunRepository.update_totals(
@@ -609,40 +637,47 @@ class PayrollService:
         adj_deduct: Decimal
     ) -> Dict[str, Decimal]:
         """Calculate individual payroll slip."""
-        base_salary = structure.base_salary
-        
+        # 定义精度量化函数
+        def quantize_money(value: Decimal) -> Decimal:
+            """量化金额到2位小数"""
+            return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        base_salary = quantize_money(structure.base_salary)
+
         # Overtime pay
         overtime_hours = Decimal(str(attendance.overtime_hours)) if attendance else Decimal("0")
-        overtime_pay = (overtime_hours * structure.hourly_rate * structure.overtime_multiplier).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
-        )
-        
-        # Allowances
+        overtime_pay = quantize_money(overtime_hours * structure.hourly_rate * structure.overtime_multiplier)
+
+        # Allowances - 确保每个津贴都量化
         allowances = json.loads(structure.allowances_json) if structure.allowances_json else {}
-        allowances_total = sum(Decimal(str(v)) for v in allowances.values())
-        
-        # Gross salary
-        gross_salary = base_salary + overtime_pay + allowances_total + adj_add
-        
+        allowances_total = quantize_money(sum(Decimal(str(v)) for v in allowances.values()))
+
+        # 确保调整项也量化
+        adj_add = quantize_money(adj_add)
+
+        # Gross salary - 所有项都已量化，再次量化以确保精度
+        gross_salary = quantize_money(base_salary + overtime_pay + allowances_total + adj_add)
+
         # Absence deduction
         absence_days = Decimal(str(attendance.absence_days)) if attendance else Decimal("0")
-        absence_deduction = (absence_days * structure.daily_deduction).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
-        )
-        
-        # Fixed deductions
+        absence_deduction = quantize_money(absence_days * structure.daily_deduction)
+
+        # Fixed deductions - 确保每个扣款都量化
         deductions = json.loads(structure.deductions_json) if structure.deductions_json else {}
-        deductions_total = sum(Decimal(str(v)) for v in deductions.values())
-        
+        deductions_total = quantize_money(sum(Decimal(str(v)) for v in deductions.values()))
+
+        # 确保调整扣款也量化
+        adj_deduct = quantize_money(adj_deduct)
+
         # Tax (simplified - 0 for now, can be expanded)
         tax = Decimal("0")
-        
-        # Total deductions
-        total_deductions = absence_deduction + deductions_total + adj_deduct + tax
-        
-        # Net salary
-        net_salary = (gross_salary - total_deductions).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-        
+
+        # Total deductions - 所有项都已量化，再次量化以确保精度
+        total_deductions = quantize_money(absence_deduction + deductions_total + adj_deduct + tax)
+
+        # Net salary - 最终量化
+        net_salary = quantize_money(gross_salary - total_deductions)
+
         return {
             "base_salary": base_salary,
             "overtime_pay": overtime_pay,
@@ -732,32 +767,63 @@ class PayrollService:
                 return False, "锁定失败"
     
     @staticmethod
-    def unlock_payroll(run_id: int, actor: str, confirmed: bool = False) -> Tuple[bool, str]:
-        """Unlock a payroll run (requires confirmation)."""
+    def unlock_payroll(run_id: int, actor: str, reason: str, confirmed: bool = False) -> Tuple[bool, str]:
+        """
+        Unlock a payroll run (requires confirmation and reason).
+
+        Args:
+            run_id: Payroll run ID
+            actor: Username performing the unlock
+            reason: Reason for unlocking (required, min 10 characters)
+            confirmed: Must be True to proceed
+
+        Returns:
+            Tuple of (success, message)
+        """
         if not confirmed:
             return False, "解锁需要确认，请设置 confirmed=True"
-        
+
+        # 强制要求提供解锁理由
+        if not reason or len(reason.strip()) < 10:
+            return False, "必须提供解锁理由（至少10个字符）"
+
         with session_scope() as session:
             run = PayrollRunRepository.get_by_id(session, run_id)
             if not run:
                 return False, "工资批次不存在"
-            
+
             if run.status != PayrollStatus.LOCKED:
                 return False, "工资批次未锁定"
-            
+
+            # 记录解锁前的状态，用于审计追踪
+            original_data = {
+                "period": run.period,
+                "total_employees": run.total_employees,
+                "total_gross": float(run.total_gross),
+                "total_net": float(run.total_net),
+                "locked_by": run.locked_by,
+                "locked_at": run.locked_at.isoformat() if run.locked_at else None,
+            }
+
             success = PayrollRunRepository.unlock(session, run_id)
-            
+
             if success:
+                # 创建高优先级审计日志
                 AuditLogRepository.create(
                     session,
                     actor=actor,
-                    action="unlock_payroll",
+                    action="unlock_payroll_critical",
                     result="success",
                     resource_type="payroll_run",
                     resource_id=run_id,
-                    metadata={"warning": "Payroll was unlocked for modification"},
+                    metadata={
+                        "warning": "!!! 工资批次已解锁，允许修改 !!!",
+                        "reason": reason.strip(),
+                        "original_data": original_data,
+                        "timestamp": datetime.utcnow().isoformat(),
+                    },
                 )
-                return True, "工资批次已解锁"
+                return True, f"工资批次已解锁（理由: {reason.strip()[:50]}）"
             else:
                 return False, "解锁失败"
 
@@ -842,12 +908,12 @@ class ImportService:
     @staticmethod
     def import_employees(df: pd.DataFrame, actor: str) -> Tuple[bool, str, int]:
         """
-        Import employees from DataFrame.
-        
+        Import employees from DataFrame with improved error handling.
+
         Args:
             df: DataFrame with employee data
             actor: Username performing import
-            
+
         Returns:
             Tuple of (success, message, count)
         """
@@ -858,12 +924,13 @@ class ImportService:
             return False, f"导入失败: 加密服务未初始化，请确保您已登录并输入了正确的主密钥", 0
         except Exception as e:
             return False, f"导入失败: 加密服务错误 - {str(e)}", 0
-        
+
         df = ImportService._rename_columns(df, ImportService.EMPLOYEE_COLUMNS)
-        
+
         imported_count = 0
         errors = []
-        
+        total_rows = len(df)
+
         for idx, row in df.iterrows():
             try:
                 hire_date = row.get("hire_date")
@@ -871,7 +938,7 @@ class ImportService:
                     hire_date = datetime.strptime(hire_date, "%Y-%m-%d").date()
                 elif hasattr(hire_date, "date"):
                     hire_date = hire_date.date()
-                
+
                 data = {
                     "employee_no": str(row.get("employee_no", "")).strip(),
                     "name": str(row.get("name", "")).strip(),
@@ -880,7 +947,7 @@ class ImportService:
                     "bank_card": str(row.get("bank_card", "")).strip() if pd.notna(row.get("bank_card")) else "",
                     "id_number": str(row.get("id_number", "")).strip() if pd.notna(row.get("id_number")) else "",
                 }
-                
+
                 success, message, _ = EmployeeService.create_employee(data, actor)
                 if success:
                     imported_count += 1
@@ -888,11 +955,24 @@ class ImportService:
                     errors.append(f"行 {idx + 2}: {message}")
             except Exception as e:
                 errors.append(f"行 {idx + 2}: {str(e)}")
-        
-        if errors and imported_count == 0:
-            return False, f"导入失败: {'; '.join(errors[:5])}", 0
-        
-        return True, f"成功导入 {imported_count} 名员工", imported_count
+
+        # 改进的结果报告
+        failed_count = len(errors)
+        if imported_count == 0:
+            # 全部失败
+            error_summary = "; ".join(errors[:10])
+            if failed_count > 10:
+                error_summary += f"... 等共 {failed_count} 个错误"
+            return False, f"导入失败，所有 {total_rows} 行都失败: {error_summary}", 0
+        elif failed_count > 0:
+            # 部分成功
+            error_summary = "; ".join(errors[:5])
+            if failed_count > 5:
+                error_summary += f"... 等共 {failed_count} 个错误"
+            return True, f"部分成功：导入 {imported_count}/{total_rows} 名员工，{failed_count} 行失败。错误: {error_summary}", imported_count
+        else:
+            # 全部成功
+            return True, f"全部成功：导入 {imported_count} 名员工", imported_count
     
     @staticmethod
     def import_salary_structures(df: pd.DataFrame, actor: str) -> Tuple[bool, str, int]:
