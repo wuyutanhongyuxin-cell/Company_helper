@@ -114,8 +114,8 @@ class AuthService:
 
             # 防止时序攻击：无论用户是否存在都执行密码验证
             if user is None:
-                # 使用假哈希值进行验证，确保执行时间一致
-                dummy_hash = "$argon2id$v=19$m=65536,t=3,p=4$dGVzdHNhbHQxMjM0NTY3OA$qL0jB5Kz9X0mC3nP8rE4wK2vF5tU7yH6sD1aB3cE4fG"
+                # 使用真实的假哈希值进行验证，确保执行时间一致
+                dummy_hash = "$argon2id$v=19$m=65536,t=3,p=4$rC9Ed1gB7Jf471DMpaZMKw$rSCCGDtp6nzTkPWilb0tfdVJMWu6EUICWNi/rjz8fnY"
                 pm.verify_password(password, dummy_hash)
                 rate_limiter.record_attempt(username, success=False)
                 return False, None, "用户名或密码错误"
